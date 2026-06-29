@@ -1,0 +1,154 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: 115share-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-115share}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-115share}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-115share} -d ${POSTGRES_DB:-115share}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: 115share-redis
+    restart: unless-stopped
+    volumes:
+      - ./data/redis:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    image: ghcr.io/cjan520/115-sharing-platform-backend:latest
+    container_name: 115share-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./data/posters:/app/data/posters
+      - ./data/member-avatars:/app/data/member-avatars
+      - ./data/logs:/app/data/logs
+      - ./data/license:/app/data/license
+      - ./backups:/app/backups
+      - ./.env:/app/.env:ro
+    ports:
+      - "${BACKEND_HOST_PORT:-8115}:8000"
+    command: >
+      python -m backend.app.utils.license_guard
+      uvicorn backend.app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 1
+      --log-level info
+      --proxy-headers
+
+  telegram-bot:
+    image: ghcr.io/cjan520/115-sharing-platform-backend:latest
+    container_name: 115share-telegram-bot
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./data/logs:/app/data/logs
+      - ./data/license:/app/data/license
+    command: >
+      python -m backend.app.utils.license_guard
+      python -m backend.app.services.telegram_bot_service
+
+  worker:
+    image: ghcr.io/cjan520/115-sharing-platform-backend:latest
+    container_name: 115share-worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./data/posters:/app/data/posters
+      - ./data/logs:/app/data/logs
+      - ./data/license:/app/data/license
+      - ./backups:/app/backups
+    command: >
+      python -m backend.app.utils.license_guard
+      celery -A backend.app.tasks.celery_app worker --loglevel=info --concurrency=1
+
+  beat:
+    image: ghcr.io/cjan520/115-sharing-platform-backend:latest
+    container_name: 115share-beat
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./data/logs:/app/data/logs
+      - ./data/license:/app/data/license
+    command: >
+      python -m backend.app.utils.license_guard
+      celery -A backend.app.tasks.celery_app beat --loglevel=info
+
+  clouddrive2-listener:
+    image: ghcr.io/cjan520/115-sharing-platform-backend:latest
+    container_name: 115share-clouddrive2-listener
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./data/logs:/app/data/logs
+      - ./data/license:/app/data/license
+    command: >
+      python -m backend.app.utils.license_guard
+      python -m backend.app.services.clouddrive2_listener
+
+  frontend-admin:
+    image: ghcr.io/cjan520/115-sharing-platform-admin:latest
+    container_name: 115share-frontend-admin
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${ADMIN_HOST_PORT:-5115}:80"
+
+  frontend-member:
+    image: ghcr.io/cjan520/115-sharing-platform-member:latest
+    container_name: 115share-frontend-member
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${MEMBER_HOST_PORT:-5116}:80"
