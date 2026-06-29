@@ -12,10 +12,18 @@ cp .env.example .env
 
 ```env
 POSTGRES_PASSWORD=数据库密码
-ADMIN_PASSWORD=管理后台密码
 JWT_SECRET=随机长字符串
 LICENSE_CODE=授权安装码
 ```
+
+默认后台账号：
+
+```text
+账号：admin
+密码：admin123456
+```
+
+首次登录后建议立即在后台修改默认密码。
 
 启动：
 
